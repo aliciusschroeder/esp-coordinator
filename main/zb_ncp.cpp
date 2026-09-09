@@ -240,7 +240,16 @@ void zb_ncp::set_channel_mask(uint32_t mask) {
 static bool s_init_flag = false;
 
 void zb_ncp::ncp_zb_task(void* arg) {
-	zb_set_network_coordinator_role(0xffffff);
+	// The argument is a CHANNEL MASK (zboss_api.h: "@param channel_mask"),
+	// not a role/feature word. The inherited 0xffffff meant channels 0-23 —
+	// out of spec at both ends: it claims the non-existent channels 0-10 and
+	// omits the real 24-26. GET_ZIGBEE_CHANNEL_MASK reported that value
+	// verbatim on every boot (factory-new included), and zigpy's Channels
+	// type raises on it while iterating, which breaks automatic zigpy backups
+	// and the ZHA migration flow. Use the SDK's 2.4 GHz set (0x07FFF800).
+	// Note this call also zeroes the BDB channel sets (see the API note), so
+	// continue_zboss re-applies m_channels_mask before commissioning.
+	zb_set_network_coordinator_role(ZB_TRANSCEIVER_ALL_CHANNELS_MASK);
 
 
     zboss_main_loop();
