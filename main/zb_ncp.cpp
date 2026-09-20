@@ -132,7 +132,16 @@ static void apply_pending_restore() {
                     zb_set_channel_mask(mask);
                     zb_set_bdb_primary_channel_set(mask);
                     zb_set_bdb_secondary_channel_set(mask);
-                    ESP_LOGI(TAG, "  Channel = %u (mask 0x%08lx)", ch, (unsigned long)mask);
+                    // The restore-forced FORMATION in continue_zboss runs on an
+                    // already-provisioned NIB and completes without a channel
+                    // scan, so the mask alone does not move the radio: measured
+                    // on the bench (IDF radio driver) and on air (beacon scan
+                    // from a second radio), the restored network sat on the MAC
+                    // default channel 11 while mask and getters said 20. Preset
+                    // the PIB cache the way an NVRAM dataset load would — the
+                    // MAC picks it up at stack start (PR #15, fix 2).
+                    ZB_PIBCACHE_CURRENT_CHANNEL() = ch;
+                    ESP_LOGI(TAG, "  Channel = %u (mask 0x%08lx, PIB preset)", ch, (unsigned long)mask);
                 }
             } break;
             case backup_structured::TAG_NWK_UPDATE_ID: {
@@ -582,11 +591,13 @@ void zb_ncp::continue_zboss(uint8_t arg) {
         }
     } else if (s_restore_applied) {
         // After apply_pending_restore: PAN/ExtPAN/Key/UpdateID are in the NIB
-        // but the radio has not yet selected an operating channel (channel scan
-        // hasn't run). STEERING is a no-op for an "already-joined" coord, so
-        // explicitly trigger FORMATION — the configured channel mask narrows
-        // the scan to the restored channel and the NIB values we just set
-        // survive because we are in factory-reset state per #445.
+        // but the radio has not yet selected an operating channel. STEERING is
+        // a no-op for an "already-joined" coord, so explicitly trigger
+        // FORMATION; the NIB values we just set survive because we are in
+        // factory-reset state per #445. NOTE: this formation does NOT scan —
+        // it completes in ~20 ms on the provisioned NIB and the mask set here
+        // does not select the channel; the operating channel comes from the
+        // PIB-cache preset in apply_pending_restore (TAG_CHANNEL).
         ESP_LOGI(TAG, "continue_zboss: restore applied, forcing NETWORK_FORMATION");
         set_channel_mask(instance().m_channels_mask);
         bdb_start_top_level_commissioning(ZB_BDB_NETWORK_FORMATION);
@@ -725,6 +736,24 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
             // decision via NWK_PERMIT_JOINING. Also covers the
             // restore-forced formation path (s_restore_applied).
             ESP_LOGI(TAG, "Formed network successfully");
+            if (s_restore_applied) {
+                // The NWK outgoing frame counter planted by
+                // esp_zb_nwk_set_frame_counter() is live now (GET_STRUCTURED_
+                // BACKUP reads it back) but did not survive the next reboot:
+                // bench planted 9,000,000 -> 1 after reboot, with this write
+                // 9,000,961. Whether the stack persisted ZB_IB_COUNTERS before
+                // the setter landed or never wrote it at all cannot be told
+                // from the prebuilt archive; the explicit write is what is
+                // measured to work. For a migrated network this is essential —
+                // devices drop coordinator traffic below their stored counter
+                // as replays. We are on the ZBOSS task here and zb_storage was
+                // erased by the RESTORE handler before the reboot (PR #15,
+                // fix 3). s_restore_applied is never cleared, so a later
+                // host-driven NWK_FORMATION in the same uptime writes the
+                // dataset again — harmless.
+                zb_nvram_write_dataset(ZB_IB_COUNTERS);
+                ESP_LOGI(TAG, "restore: persisted ZB_IB_COUNTERS (frame counter)");
+            }
         }
 
         break;
