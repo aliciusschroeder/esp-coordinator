@@ -21,13 +21,16 @@ static const char* TAG = "NCP";
 #include "commands_impl.h"
 
 // Set to true by apply_pending_restore() when it actually applies a TLV.
-// continue_zboss reads it to force NETWORK_FORMATION (which performs the
-// channel-scan step) instead of the default STEERING — without the explicit
-// formation kick, ZBOSS reports joined=true but the radio sits on channel
-// 255 (uninitialised) because no scan ever ran. See espressif/esp-zigbee-sdk#445
+// continue_zboss reads it to force NETWORK_FORMATION instead of the default
+// STEERING — without the explicit formation kick, ZBOSS reports joined=true
+// but never brings the network up. NOTE: that formation runs on the
+// provisioned NIB and does NOT scan; the operating channel comes from the
+// PIB-cache preset in apply_pending_restore (TAG_CHANNEL), without which
+// the radio stays on the MAC default 11. See espressif/esp-zigbee-sdk#445
 // for the underlying constraint: setters only take effect in factory-reset
 // state, so the restore-applied flag also gates a formation pass that uses
-// our just-set NIB values rather than re-randomising them.
+// our just-set NIB values rather than re-randomising them. The flag also
+// gates the ZB_IB_COUNTERS persist in the formation signal handler.
 static bool s_restore_applied = false;
 
 // Pulls "restore_pend"/"tlv" out of NVS (set by RESTORE_STRUCTURED_BACKUP
@@ -142,6 +145,10 @@ static void apply_pending_restore() {
                     // MAC picks it up at stack start (PR #15, fix 2).
                     ZB_PIBCACHE_CURRENT_CHANNEL() = ch;
                     ESP_LOGI(TAG, "  Channel = %u (mask 0x%08lx, PIB preset)", ch, (unsigned long)mask);
+                } else {
+                    // Not applied: the forced formation then lands on the MAC
+                    // default channel 11 (same as an image without TAG_CHANNEL).
+                    ESP_LOGW(TAG, "  Channel %u out of range, ignored — network will come up on 11", ch);
                 }
             } break;
             case backup_structured::TAG_NWK_UPDATE_ID: {
@@ -751,8 +758,14 @@ extern "C" void zboss_signal_handler(zb_uint8_t param)
                 // fix 3). s_restore_applied is never cleared, so a later
                 // host-driven NWK_FORMATION in the same uptime writes the
                 // dataset again — harmless.
-                zb_nvram_write_dataset(ZB_IB_COUNTERS);
-                ESP_LOGI(TAG, "restore: persisted ZB_IB_COUNTERS (frame counter)");
+                zb_ret_t r = zb_nvram_write_dataset(ZB_IB_COUNTERS);
+                if (r != RET_OK) {
+                    // A failed write silently reproduces the bug this fixes
+                    // (counter back to ~0 after the next reboot).
+                    ESP_LOGE(TAG, "restore: ZB_IB_COUNTERS write failed (%ld)", (long)r);
+                } else {
+                    ESP_LOGI(TAG, "restore: persisted ZB_IB_COUNTERS (frame counter)");
+                }
             }
         }
 
