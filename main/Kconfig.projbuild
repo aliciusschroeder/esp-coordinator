@@ -87,6 +87,17 @@ menu "Zigbee Network Co-processor"
             "XIAO ESP32C6 Getting Started" + arduino-esp32
             variants/XIAO_ESP32C6/pins_arduino.h (WIFI_ENABLE/WIFI_ANT_CONFIG).
 
+    config NCP_TOUCHLINK_ON_PERMIT_JOIN
+        bool "Touchlink scan while permit-join is open"
+        default n
+        help
+            While the host keeps permit-join open on the coordinator, send a
+            Touchlink (ZLL) Scan Request on the current channel every 3 s and
+            report received Touchlink frames to the host as vendor indication
+            0x0F01. zigbee-herdsman logs those as raw frames and ignores them.
+            Needed for devices that only leave their pairing mode for a
+            Touchlink initiator, e.g. IKEA KAJPLATS LED2401G5.
+
 endmenu
 
 menu "Zigbee"

@@ -5,6 +5,7 @@
 #include "version.h"
 
 #include "commands_helpers.h"
+#include "touchlink.h"
 #include <esp_mac.h>
 // (soc/usb_serial_jtag_reg.h include dropped 2026-06-05 — it only served the
 // removed USB phy-detach register writes, see the comment in
@@ -901,6 +902,9 @@ struct zb_ncp::cmd_handle<NWK_PERMIT_JOINING> : immediate_cmd_process<NWK_PERMIT
         req->permit_duration = duration;
         req->tc_significance = 1;
         zb_zdo_mgmt_permit_joining_req(buf, [](uint8_t buf){ zb_buf_free(buf); });
+#if CONFIG_NCP_TOUCHLINK_ON_PERMIT_JOIN
+        touchlink::on_permit_join(duration);
+#endif
     }
 };
 
@@ -1131,6 +1135,12 @@ struct zb_ncp::cmd_handle<ZDO_PERMIT_JOINING_REQ> : request_cmd_process< ZDO_PER
     static constexpr const char* name = "ZDO_PERMIT_JOINING_REQ";
     static uint8_t start_request(uint8_t buf) {
         //ESP_LOGI(TAG,"S_ZDO_PERMIT_JOINING_REQ::start_request nwk_addr:%04x time:%d",s_req.dest_addr,int(s_req.permit_duration));
+#if CONFIG_NCP_TOUCHLINK_ON_PERMIT_JOIN
+        const auto* pj = ZB_BUF_GET_PARAM(buf, zb_zdo_mgmt_permit_joining_req_param_t);
+        if (pj->dest_addr == 0x0000) {
+            touchlink::on_permit_join(pj->permit_duration);
+        }
+#endif
         return zb_zdo_mgmt_permit_joining_req(buf,&Base::req_cb);
     }
 

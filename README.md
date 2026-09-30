@@ -102,6 +102,36 @@ A separate **experimental** build (branch [`wifi-coex`](https://github.com/tostm
 The stable USB / UART firmware described in this README (and the main flasher) is unchanged.
 
 
+## Optional build: Touchlink scan during permit-join
+
+Some devices leave their pairing mode only for a Touchlink initiator, e.g. the IKEA KAJPLATS LED2401G5. With permit-join alone they never associate. zigbee-herdsman's zboss adapter has no inter-PAN support, so Zigbee2MQTT's Touchlink functions do not work with this coordinator.
+
+With `CONFIG_NCP_TOUCHLINK_ON_PERMIT_JOIN=y` (menu "Zigbee Network Co-processor", default off) the coordinator sends a Touchlink Scan Request every 3 s while the host keeps permit-join open on the coordinator. A factory-new device in pairing mode answers the scan and then joins through normal permit-join. Zigbee2MQTT, zigbee-herdsman and the host image stay unchanged.
+
+```bash
+idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.touchlink" set-target esp32c6
+idf.py build
+```
+
+Behaviour:
+* Starts on `ZDO_PERMIT_JOINING_REQ` to `0x0000` (Zigbee2MQTT "Permit join (All)" or coordinator-only) and on `NWK_PERMIT_JOINING`. Permit-join to a single router does not start it.
+* Stops when permit-join is closed or the window ends. A new permit-join restarts the window.
+* Current channel only. Sends Scan Requests only; no Identify, Network Join, Network Start or Reset to Factory New.
+* Inter-PAN frames are received through `-Wl,--wrap=zll_process_device_command`. Scan Responses to our own scans are consumed; all other ZLL frames go to the stack's handler as before.
+* Devices already on the network answer the scans too. They are only reported.
+
+Diagnostics: the coordinator reports each step as vendor indication `0x0F01`. zigbee-herdsman does not know the ID, logs the frame at debug level (`zh:zboss:uart: <-- FRAME: 0002010f...`) and discards it. Payload `[event | data]`:
+
+| Event | Data |
+|---|---|
+| `01` start | duration (1), channel (1) |
+| `02` scan sent | transaction ID (4), scan number (2), status (1): 0 queued, 1 no buffer |
+| `03` frame received | source IEEE (8), source PAN (2), RSSI (1), LQI (1), ZCL length (1), ZCL frame |
+| `04` stop | reason (1): 0 permit-join closed, 1 window over; scans (2), responses (2) |
+
+Tested on ESP32-C6 with Zigbee2MQTT 2.14.1 (zigbee-herdsman 10.9.2): a KAJPLATS LED2401G5 in pairing mode (15 power cycles) answered the third scan as factory-new, joined 2 s later and completed the interview. Not built or tested on ESP32-C5/H2.
+
+
 ## Zigbee2MQTT Integration & Hardware Migration
 
 While this coordinator works perfectly with the standard Zigbee2MQTT release, **we highly recommend using our customized Docker image** (`ghcr.io/tostmann/zigbee2mqtt-esp32:latest`).

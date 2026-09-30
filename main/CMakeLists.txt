@@ -40,6 +40,11 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 idf_component_register(SRC_DIRS "."
                        INCLUDE_DIRS "${CMAKE_CURRENT_BINARY_DIR}/include")
 
+# Touchlink: route the stack's inter-PAN ZLL frames through touchlink.cpp.
+if(CONFIG_NCP_TOUCHLINK_ON_PERMIT_JOIN)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=zll_process_device_command")
+endif()
+
 # Damit der generierte Header VOR dem Compile existiert (configure_file haengt
 # nicht am Component-Lib-Target).
 add_custom_target(version_hdr ALL DEPENDS "${VERSION_HDR_OUT}")

@@ -1,0 +1,2 @@
+# Touchlink initiator build (see main/Kconfig.projbuild)
+CONFIG_NCP_TOUCHLINK_ON_PERMIT_JOIN=y
